@@ -53,26 +53,30 @@ def analyze_cat_losses(data, threshold=0):
     return frequency_by_year, severity_stats, peril_summary, freq_stats, filtered_data
 
 def compute_oep_aep(shape_param, scale_param, avg_frequency, max_loss, num_simulations=10000):
-    # Define thresholds for OEP
-    oep_thresholds = np.linspace(scale_param, max_loss, num=20)
-    oep_prob = 1 - stats.pareto.cdf(oep_thresholds, shape_param, loc=0, scale=scale_param)
-    oep_table = pd.DataFrame({'Loss Threshold': oep_thresholds, 'P(Event > Threshold)': oep_prob})
-
-    # Define thresholds for AEP
-    aep_thresholds = np.linspace(scale_param, max_loss*5, num=20)
-    aep_thresholds = np.unique(aep_thresholds)  # Ensure unique thresholds
-
-    # Simulate number of events
-    event_counts = np.random.poisson(lam=avg_frequency, size=num_simulations)
+    # Define return periods
+    return_periods = [1, 2, 5, 10, 25, 50, 100, 250]
     
-    # Initialize aggregate losses
+    # Compute Single Loss for Return Periods (OEP)
+    single_loss = {}
+    for rp in return_periods:
+        probability = 1 - 1/rp
+        loss = stats.pareto.ppf(probability, shape_param, loc=0, scale=scale_param)
+        single_loss[rp] = loss
+    single_loss_table = pd.DataFrame({
+        'Return Period (Years)': return_periods,
+        'Single Loss Threshold': [single_loss[rp] for rp in return_periods]
+    })
+
+    # Compute Aggregate Yearly Loss for Return Periods (AEP) via Monte Carlo Simulation
+    # Simulate aggregate losses
+    event_counts = np.random.poisson(lam=avg_frequency, size=num_simulations)
     aggregate_losses = np.zeros(num_simulations)
     
-    # Handle simulations with at least one event
+    # Identify simulations with at least one event
     non_zero_indices = event_counts > 0
     non_zero_event_counts = event_counts[non_zero_indices]
     
-    if shape_param is not None and scale_param is not None:
+    if shape_param is not None and scale_param is not None and np.any(non_zero_indices):
         unique_counts, counts = np.unique(non_zero_event_counts, return_counts=True)
         for uc, cnt in zip(unique_counts, counts):
             if uc > 0:
@@ -81,15 +85,18 @@ def compute_oep_aep(shape_param, scale_param, avg_frequency, max_loss, num_simul
                 # Sum losses for each simulation
                 aggregate_losses[non_zero_indices][event_counts[non_zero_indices] == uc] += sampled_losses.sum(axis=1)
     
-    # Define aggregate loss thresholds up to max_loss*5 or a set maximum (e.g., 100M)
-    overall_max_loss = max_loss * 5
-    aep_thresholds = np.linspace(scale_param, overall_max_loss, num=20)
+    # Define thresholds for AEP (based on return periods)
+    aep_thresholds = []
+    for rp in return_periods:
+        probability = 1 - 1/rp
+        loss = np.percentile(aggregate_losses, probability*100)
+        aep_thresholds.append(loss)
+    aggregate_loss_table = pd.DataFrame({
+        'Return Period (Years)': return_periods,
+        'Aggregate Loss Threshold': aep_thresholds
+    })
     
-    # Compute AEP probabilities
-    aep_prob = [np.mean(aggregate_losses > thresh) for thresh in aep_thresholds]
-    aep_table = pd.DataFrame({'Aggregate Loss Threshold': aep_thresholds, 'P(Total Loss > Threshold)': aep_prob})
-    
-    return oep_table, aep_table
+    return single_loss_table, aggregate_loss_table
 
 def create_plots(frequency_by_year, severity_stats, peril_summary, data, threshold):
     # Frequency Plot
@@ -276,10 +283,10 @@ if uploaded_file is not None:
         st.plotly_chart(ecdf_fig, use_container_width=True)
         st.plotly_chart(peril_plot, use_container_width=True)
         
-        # Compute OEP and AEP tables
+        # Compute OEP and AEP tables if Pareto was fitted
         if alpha is not None:
-            with st.spinner("Computing OEP and AEP tables..."):
-                oep_table, aep_table = compute_oep_aep(
+            with st.spinner("Computing Single Loss and Aggregate Yearly Loss for Return Periods..."):
+                single_loss_table, aggregate_loss_table = compute_oep_aep(
                     shape_param=alpha,
                     scale_param=threshold,
                     avg_frequency=freq_stats['Average Annual Frequency'],
@@ -287,11 +294,17 @@ if uploaded_file is not None:
                     num_simulations=10000  # Adjust number of simulations as needed
                 )
         else:
-            oep_table, aep_table = pd.DataFrame(), pd.DataFrame()
+            single_loss_table, aggregate_loss_table = pd.DataFrame(), pd.DataFrame()
         
         # Display detailed tables
         st.subheader("Detailed Analysis Tables")
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["Frequency Analysis", "Severity Analysis", "Peril Analysis", "OEP Table", "AEP Table"])
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+            "Frequency Analysis", 
+            "Severity Analysis", 
+            "Peril Analysis", 
+            "Single Loss (Return Periods)", 
+            "Aggregate Yearly Loss (Return Periods)"
+        ])
         
         with tab1:
             st.dataframe(frequency_by_year)
@@ -300,11 +313,11 @@ if uploaded_file is not None:
         with tab3:
             st.dataframe(peril_summary)
         with tab4:
-            st.write("### Occurrence Exceedance Probability (OEP)")
-            st.dataframe(oep_table)
+            st.write("### Single Loss for Given Return Periods")
+            st.dataframe(single_loss_table)
         with tab5:
-            st.write("### Aggregate Exceedance Probability (AEP)")
-            st.dataframe(aep_table)
+            st.write("### Aggregate Yearly Loss for Given Return Periods")
+            st.dataframe(aggregate_loss_table)
     
     except Exception as e:
         st.error(f"An error occurred: {str(e)}")
