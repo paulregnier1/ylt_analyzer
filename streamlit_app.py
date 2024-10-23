@@ -4,6 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
+import scipy.stats as stats  # Import scipy.stats for statistical fitting
 
 def analyze_cat_losses(data, threshold=0):
     # Filter data based on threshold
@@ -54,19 +55,19 @@ def analyze_cat_losses(data, threshold=0):
 def create_plots(frequency_by_year, severity_stats, peril_summary, data, threshold):
     # Frequency Plot
     freq_fig = make_subplots(specs=[[{"secondary_y": True}]])
-    
+
     freq_fig.add_trace(
         go.Bar(x=frequency_by_year['Year'], y=frequency_by_year['EventCount'],
                name="Event Count", marker_color='steelblue'),
         secondary_y=False
     )
-    
+
     freq_fig.add_trace(
         go.Scatter(x=frequency_by_year['Year'], y=frequency_by_year['TotalLoss'],
                   name="Total Loss", line=dict(color='red')),
         secondary_y=True
     )
-    
+
     freq_fig.update_layout(
         title="Catastrophe Event Frequency and Total Loss by Year",
         xaxis_title="Year",
@@ -76,7 +77,36 @@ def create_plots(frequency_by_year, severity_stats, peril_summary, data, thresho
 
     # ECDF Plot
     fig_ecdf = px.ecdf(data, x='Loss', title='Empirical Cumulative Distribution of Losses')
-    
+
+    # Fit Lomax (Pareto Type II) distribution to the loss data
+    positive_losses = data['Loss'][data['Loss'] > 0]
+
+    # Fit the Lomax distribution
+    params = stats.lomax.fit(positive_losses, floc=0)  # Fix loc=0
+
+    # Generate theoretical CDF from the fitted distribution
+    x = np.linspace(0, 20000000, 1000)  # x from 0 to 20 million
+    cdf_fitted = stats.lomax.cdf(x, *params)
+
+    # Add the theoretical CDF to the ECDF plot
+    fig_ecdf.add_trace(
+        go.Scatter(
+            x=x,
+            y=cdf_fitted,
+            mode='lines',
+            name='Fitted Lomax CDF',
+            line=dict(color='red')
+        )
+    )
+
+    # Update x-axis range
+    fig_ecdf.update_xaxes(range=[0, 20000000])
+    fig_ecdf.update_layout(
+        xaxis_title='Loss Amount',
+        yaxis_title='Cumulative Probability',
+        legend_title='Legend'
+    )
+
     # Peril Loss Plot
     peril_plot = px.bar(
         peril_summary,
@@ -188,4 +218,5 @@ if uploaded_file is not None:
         st.error("Please ensure your CSV file contains the required columns: Year, Loss, and Peril")
 else:
     st.info("Please upload a CSV file to begin the analysis.")
+
 
