@@ -52,52 +52,6 @@ def analyze_cat_losses(data, threshold=0):
 
     return frequency_by_year, severity_stats, peril_summary, freq_stats, filtered_data
 
-def compute_oep_aep(shape_param, scale_param, avg_frequency, max_loss, num_simulations=10000):
-    # Define return periods
-    return_periods = [1, 2, 5, 10, 25, 50, 100, 250]
-    
-    # Compute Single Loss for Return Periods (OEP)
-    single_loss = {}
-    for rp in return_periods:
-        probability = 1 - 1/rp
-        loss = stats.pareto.ppf(probability, shape_param, loc=0, scale=scale_param)
-        single_loss[rp] = loss
-    single_loss_table = pd.DataFrame({
-        'Return Period (Years)': return_periods,
-        'Single Loss Threshold': [single_loss[rp] for rp in return_periods]
-    })
-
-    # Compute Aggregate Yearly Loss for Return Periods (AEP) via Monte Carlo Simulation
-    # Simulate aggregate losses
-    event_counts = np.random.poisson(lam=avg_frequency, size=num_simulations)
-    aggregate_losses = np.zeros(num_simulations)
-    
-    # Identify simulations with at least one event
-    non_zero_indices = event_counts > 0
-    non_zero_event_counts = event_counts[non_zero_indices]
-    
-    if shape_param is not None and scale_param is not None and np.any(non_zero_indices):
-        unique_counts, counts = np.unique(non_zero_event_counts, return_counts=True)
-        for uc, cnt in zip(unique_counts, counts):
-            if uc > 0:
-                # Sample uc losses for cnt simulations
-                sampled_losses = stats.pareto.rvs(shape_param, loc=0, scale=scale_param, size=(cnt, uc))
-                # Sum losses for each simulation
-                aggregate_losses[non_zero_indices][event_counts[non_zero_indices] == uc] += sampled_losses.sum(axis=1)
-    
-    # Define thresholds for AEP (based on return periods)
-    aep_thresholds = []
-    for rp in return_periods:
-        probability = 1 - 1/rp
-        loss = np.percentile(aggregate_losses, probability*100)
-        aep_thresholds.append(loss)
-    aggregate_loss_table = pd.DataFrame({
-        'Return Period (Years)': return_periods,
-        'Aggregate Loss Threshold': aep_thresholds
-    })
-    
-    return single_loss_table, aggregate_loss_table
-
 def create_plots(frequency_by_year, severity_stats, peril_summary, data, threshold):
     # Frequency Plot
     freq_fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -144,11 +98,8 @@ def create_plots(frequency_by_year, severity_stats, peril_summary, data, thresho
         st.error(f"Error fitting Pareto distribution: {e}")
         shape_param, loc_param, scale_param = None, None, None
     
-    # Initialize alpha
-    alpha = None
-    
     if shape_param is not None:
-        # Generate theoretical CDF from the fitted distribution up to max_loss
+        # Generate theoretical CDF from the fitted distribution
         max_loss = data['Loss'].max()
         x = np.linspace(threshold, max_loss, 1000)  # x from threshold to maximum loss
         cdf_fitted = stats.pareto.cdf(x, shape_param, loc=loc_param, scale=scale_param)
@@ -171,9 +122,6 @@ def create_plots(frequency_by_year, severity_stats, peril_summary, data, thresho
             yaxis_title='Cumulative Probability',
             legend_title='Legend'
         )
-        
-        # Assign alpha
-        alpha = shape_param
     else:
         st.warning("Pareto distribution could not be fitted to the data.")
     
@@ -186,7 +134,7 @@ def create_plots(frequency_by_year, severity_stats, peril_summary, data, thresho
         labels={'TotalLoss': 'Loss Amount', 'Peril': 'Peril Type'}
     )
 
-    return freq_fig, fig_ecdf, peril_plot, alpha
+    return freq_fig, fig_ecdf, peril_plot, shape_param
 
 # Streamlit App
 st.set_page_config(page_title="Catastrophe Loss Analysis", layout="wide")
@@ -260,8 +208,6 @@ if uploaded_file is not None:
             st.subheader("Total Losses")
             st.write(f"Total Loss: ${analyzed_data['Loss'].sum():,.2f}")
             st.write(f"Average Loss: ${analyzed_data['Loss'].mean():,.2f}")
-            if alpha is not None:
-                st.metric("Fitted Pareto Alpha (Shape)", f"{alpha:.4f}")
         
         with col2:
             st.subheader("Most Frequent Peril")
@@ -285,28 +231,9 @@ if uploaded_file is not None:
         st.plotly_chart(ecdf_fig, use_container_width=True)
         st.plotly_chart(peril_plot, use_container_width=True)
         
-        # Compute OEP and AEP tables if Pareto was fitted
-        if alpha is not None:
-            with st.spinner("Computing Single Loss and Aggregate Yearly Loss for Return Periods..."):
-                single_loss_table, aggregate_loss_table = compute_oep_aep(
-                    shape_param=alpha,
-                    scale_param=threshold,
-                    avg_frequency=freq_stats['Average Annual Frequency'],
-                    max_loss=data['Loss'].max(),
-                    num_simulations=10000  # Adjust number of simulations as needed
-                )
-        else:
-            single_loss_table, aggregate_loss_table = pd.DataFrame(), pd.DataFrame()
-        
         # Display detailed tables
         st.subheader("Detailed Analysis Tables")
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "Frequency Analysis", 
-            "Severity Analysis", 
-            "Peril Analysis", 
-            "Single Loss (Return Periods)", 
-            "Aggregate Yearly Loss (Return Periods)"
-        ])
+        tab1, tab2, tab3 = st.tabs(["Frequency Analysis", "Severity Analysis", "Peril Analysis"])
         
         with tab1:
             st.dataframe(frequency_by_year)
@@ -314,12 +241,6 @@ if uploaded_file is not None:
             st.dataframe(severity_stats)
         with tab3:
             st.dataframe(peril_summary)
-        with tab4:
-            st.write("### Single Loss for Given Return Periods")
-            st.dataframe(single_loss_table)
-        with tab5:
-            st.write("### Aggregate Yearly Loss for Given Return Periods")
-            st.dataframe(aggregate_loss_table)
     
     except Exception as e:
         st.error(f"An error occurred: {str(e)}")
