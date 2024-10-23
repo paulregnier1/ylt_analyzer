@@ -82,11 +82,16 @@ def create_plots(frequency_by_year, severity_stats, peril_summary, data, thresho
     positive_losses = data['Loss']
     
     # Fit the Pareto distribution with scale fixed at the threshold
-    # The 'b' parameter is the shape parameter
+    # The 'b' parameter is the shape parameter (alpha)
     try:
-        # Fit the Pareto distribution; fix scale=threshold to ensure it starts at threshold
-        params = stats.pareto.fit(positive_losses, floc=0, fscale=threshold)
-        shape_param = params[0]
+        # Ensure that all losses are greater than the threshold
+        losses_for_fitting = positive_losses[positive_losses >= threshold]
+        if len(losses_for_fitting) < 2:
+            raise ValueError("Not enough data points above the threshold to fit the Pareto distribution.")
+        
+        # Fit the Pareto distribution; fix loc=0 and scale=threshold
+        params = stats.pareto.fit(losses_for_fitting, floc=0, fscale=threshold)
+        shape_param = params[0]  # alpha
         loc_param = params[1]
         scale_param = params[2]
     except Exception as e:
@@ -128,7 +133,7 @@ def create_plots(frequency_by_year, severity_stats, peril_summary, data, thresho
         labels={'TotalLoss': 'Loss Amount', 'Peril': 'Peril Type'}
     )
 
-    return freq_fig, fig_ecdf, peril_plot
+    return freq_fig, fig_ecdf, peril_plot, shape_param
 
 # Streamlit App
 st.set_page_config(page_title="Catastrophe Loss Analysis", layout="wide")
@@ -175,8 +180,8 @@ if uploaded_file is not None:
             data, threshold
         )
         
-        # Create plots
-        freq_fig, ecdf_fig, peril_plot = create_plots(
+        # Create plots and get the alpha parameter
+        freq_fig, ecdf_fig, peril_plot, alpha = create_plots(
             frequency_by_year, severity_stats, peril_summary, analyzed_data, 
             threshold
         )
@@ -196,18 +201,31 @@ if uploaded_file is not None:
         
         # Display summary statistics
         st.subheader("Loss Statistics")
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             st.subheader("Total Losses")
             st.write(f"Total Loss: ${analyzed_data['Loss'].sum():,.2f}")
             st.write(f"Average Loss: ${analyzed_data['Loss'].mean():,.2f}")
+            if alpha is not None:
+                st.metric("Fitted Pareto Alpha (Shape)", f"{alpha:.4f}")
         
         with col2:
             st.subheader("Most Frequent Peril")
-            top_peril = peril_summary.iloc[0]
-            st.write(f"Type: {top_peril['Peril']}")
-            st.write(f"Events: {top_peril['EventCount']:.0f}")
+            if not peril_summary.empty:
+                top_peril = peril_summary.iloc[0]
+                st.write(f"Type: {top_peril['Peril']}")
+                st.write(f"Events: {top_peril['EventCount']:.0f}")
+            else:
+                st.write("No data available.")
+        
+        with col3:
+            if alpha is not None:
+                st.subheader("Pareto Distribution")
+                st.write(f"**Alpha (Shape Parameter):** {alpha:.4f}")
+            else:
+                st.subheader("Pareto Distribution")
+                st.write("Pareto distribution not fitted.")
         
         # Display plots
         st.plotly_chart(freq_fig, use_container_width=True)
