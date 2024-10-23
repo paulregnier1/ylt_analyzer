@@ -84,7 +84,7 @@ def create_plots(frequency_by_year, severity_stats, peril_summary, data, thresho
     # Fit the Pareto distribution with scale fixed at the threshold
     # The 'b' parameter is the shape parameter (alpha)
     try:
-        # Ensure that all losses are greater than the threshold
+        # Ensure that all losses are greater than or equal to the threshold
         losses_for_fitting = positive_losses[positive_losses >= threshold]
         if len(losses_for_fitting) < 2:
             raise ValueError("Not enough data points above the threshold to fit the Pareto distribution.")
@@ -100,7 +100,8 @@ def create_plots(frequency_by_year, severity_stats, peril_summary, data, thresho
     
     if shape_param is not None:
         # Generate theoretical CDF from the fitted distribution
-        x = np.linspace(threshold, 20000000, 1000)  # x from threshold to 20 million
+        max_loss = data['Loss'].max()
+        x = np.linspace(threshold, max_loss, 1000)  # x from threshold to maximum loss
         cdf_fitted = stats.pareto.cdf(x, shape_param, loc=loc_param, scale=scale_param)
     
         # Add the theoretical CDF to the ECDF plot
@@ -114,8 +115,8 @@ def create_plots(frequency_by_year, severity_stats, peril_summary, data, thresho
             )
         )
     
-        # Update x-axis range
-        fig_ecdf.update_xaxes(range=[threshold, 20000000])
+        # Update x-axis range to 0-20M
+        fig_ecdf.update_xaxes(range=[0, 20000000])
         fig_ecdf.update_layout(
             xaxis_title='Loss Amount',
             yaxis_title='Cumulative Probability',
