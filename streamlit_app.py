@@ -260,6 +260,8 @@ if uploaded_file is not None:
             st.subheader("Total Losses")
             st.write(f"Total Loss: ${analyzed_data['Loss'].sum():,.2f}")
             st.write(f"Average Loss: ${analyzed_data['Loss'].mean():,.2f}")
+            if alpha is not None:
+                st.metric("Fitted Pareto Alpha (Shape)", f"{alpha:.4f}")
         
         with col2:
             st.subheader("Most Frequent Peril")
@@ -298,7 +300,7 @@ if uploaded_file is not None:
         
         # Display detailed tables
         st.subheader("Detailed Analysis Tables")
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "Frequency Analysis", 
             "Severity Analysis", 
             "Peril Analysis", 
