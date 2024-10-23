@@ -5,21 +5,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
 
-def apply_layer(loss, deductible, limit):
-    """Apply insurance layer to loss amount"""
-    return min(limit, max(loss - deductible, 0))
-
-def analyze_cat_losses(data, threshold=0, deductible=0, limit=float('inf')):
+def analyze_cat_losses(data, threshold=0):
     # Filter data based on threshold
     filtered_data = data[data['Loss'] > threshold].copy()
-    
-    # Apply insurance layer if specified
-    if deductible > 0 or limit < float('inf'):
-        filtered_data['LayeredLoss'] = filtered_data['Loss'].apply(
-            lambda x: apply_layer(x, deductible, limit)
-        )
-    else:
-        filtered_data['LayeredLoss'] = filtered_data['Loss']
     
     # Calculate years of exposure
     total_years = filtered_data['Year'].nunique()
@@ -27,12 +15,10 @@ def analyze_cat_losses(data, threshold=0, deductible=0, limit=float('inf')):
     # 1. Frequency Analysis
     frequency_by_year = (filtered_data.groupby('Year')
                         .agg({
-                            'Loss': ['count', 'sum', 'mean', 'median'],
-                            'LayeredLoss': ['sum', 'mean', 'median']
+                            'Loss': ['count', 'sum', 'mean', 'median']
                         })
                         .round(2))
-    frequency_by_year.columns = ['EventCount', 'TotalLoss', 'AvgLoss', 'MedianLoss',
-                               'LayeredTotalLoss', 'LayeredAvgLoss', 'LayeredMedianLoss']
+    frequency_by_year.columns = ['EventCount', 'TotalLoss', 'AvgLoss', 'MedianLoss']
     frequency_by_year = frequency_by_year.reset_index()
     
     # Calculate average frequency
@@ -48,30 +34,24 @@ def analyze_cat_losses(data, threshold=0, deductible=0, limit=float('inf')):
     severity_stats = (filtered_data.groupby('Year')
                      .agg({
                          'Loss': ['min', lambda x: x.quantile(0.25), 'median',
-                                 lambda x: x.quantile(0.75), 'max', 'sum'],
-                         'LayeredLoss': ['min', lambda x: x.quantile(0.25), 'median',
-                                       lambda x: x.quantile(0.75), 'max', 'sum']
+                                  lambda x: x.quantile(0.75), 'max', 'sum']
                      })
                      .round(2))
-    severity_stats.columns = ['MinLoss', 'Q1Loss', 'MedianLoss', 'Q3Loss', 'MaxLoss', 'TotalLoss',
-                            'LayeredMinLoss', 'LayeredQ1Loss', 'LayeredMedianLoss', 
-                            'LayeredQ3Loss', 'LayeredMaxLoss', 'LayeredTotalLoss']
+    severity_stats.columns = ['MinLoss', 'Q1Loss', 'MedianLoss', 'Q3Loss', 'MaxLoss', 'TotalLoss']
     severity_stats = severity_stats.reset_index()
 
     # 3. Peril Analysis
     peril_summary = (filtered_data.groupby('Peril')
                     .agg({
-                        'Loss': ['count', 'sum', 'mean', 'median'],
-                        'LayeredLoss': ['sum', 'mean', 'median']
+                        'Loss': ['count', 'sum', 'mean', 'median']
                     })
                     .round(2))
-    peril_summary.columns = ['EventCount', 'TotalLoss', 'AvgLoss', 'MedianLoss',
-                           'LayeredTotalLoss', 'LayeredAvgLoss', 'LayeredMedianLoss']
+    peril_summary.columns = ['EventCount', 'TotalLoss', 'AvgLoss', 'MedianLoss']
     peril_summary = peril_summary.reset_index().sort_values('TotalLoss', ascending=False)
 
     return frequency_by_year, severity_stats, peril_summary, freq_stats, filtered_data
 
-def create_plots(frequency_by_year, severity_stats, peril_summary, data, threshold, deductible, limit):
+def create_plots(frequency_by_year, severity_stats, peril_summary, data, threshold):
     # Frequency Plot
     freq_fig = make_subplots(specs=[[{"secondary_y": True}]])
     
@@ -82,47 +62,31 @@ def create_plots(frequency_by_year, severity_stats, peril_summary, data, thresho
     )
     
     freq_fig.add_trace(
-        go.Scatter(x=frequency_by_year['Year'], y=frequency_by_year['LayeredTotalLoss'],
-                  name="Total Layered Loss", line=dict(color='red')),
+        go.Scatter(x=frequency_by_year['Year'], y=frequency_by_year['TotalLoss'],
+                  name="Total Loss", line=dict(color='red')),
         secondary_y=True
     )
     
     freq_fig.update_layout(
-        title="Catastrophe Event Frequency and Layered Loss by Year",
+        title="Catastrophe Event Frequency and Total Loss by Year",
         xaxis_title="Year",
         yaxis_title="Number of Events",
         yaxis2_title="Total Loss"
     )
 
-    # Loss Distribution Plot
-    fig_dist = make_subplots(rows=2, cols=1, subplot_titles=('Original Losses', 'Layered Losses'))
+    # ECDF Plot
+    fig_ecdf = px.ecdf(data, x='Loss', title='Empirical Cumulative Distribution of Losses')
     
-    fig_dist.add_trace(
-        go.Histogram(x=data['Loss'], name='Original Losses', 
-                    marker_color='steelblue', opacity=0.7),
-        row=1, col=1
-    )
-    
-    fig_dist.add_trace(
-        go.Histogram(x=data['LayeredLoss'], name='Layered Losses',
-                    marker_color='red', opacity=0.7),
-        row=2, col=1
-    )
-    
-    fig_dist.update_layout(height=600, title_text="Distribution of Losses")
-
     # Peril Loss Plot
     peril_plot = px.bar(
         peril_summary,
         x='Peril',
-        y=['TotalLoss', 'LayeredTotalLoss'],
+        y='TotalLoss',
         title='Total Losses by Peril',
-        barmode='group',
-        labels={'value': 'Loss Amount', 'Peril': 'Peril Type', 
-                'variable': 'Loss Type'}
+        labels={'TotalLoss': 'Loss Amount', 'Peril': 'Peril Type'}
     )
 
-    return freq_fig, fig_dist, peril_plot
+    return freq_fig, fig_ecdf, peril_plot
 
 # Streamlit App
 st.set_page_config(page_title="Catastrophe Loss Analysis", layout="wide")
@@ -148,50 +112,31 @@ if uploaded_file is not None:
         # Remove any rows with NA values
         data = data.dropna(subset=['Year', 'Loss', 'Peril'])
         
-        # Analysis parameters in columns
-        col1, col2, col3 = st.columns(3)
+        # Analysis parameters
+        st.subheader("Analysis Parameters")
+        col1 = st.columns(1)[0]
         
         with col1:
             # Threshold selector
             min_loss = data['Loss'].min()
             max_loss = data['Loss'].max()
-            threshold = st.slider(
-                "Select Loss Threshold",
+            threshold = st.number_input(
+                "Enter Loss Threshold",
                 min_value=float(min_loss),
                 max_value=float(max_loss),
                 value=float(min_loss),
                 format="%.2f"
             )
         
-        with col2:
-            # Deductible selector
-            deductible = st.slider(
-                "Select Deductible",
-                min_value=0.0,
-                max_value=float(max_loss),
-                value=0.0,
-                format="%.2f"
-            )
-        
-        with col3:
-            # Limit selector
-            limit = st.slider(
-                "Select Limit",
-                min_value=float(min_loss),
-                max_value=float(max_loss * 2),
-                value=float(max_loss),
-                format="%.2f"
-            )
-        
         # Perform analysis
         frequency_by_year, severity_stats, peril_summary, freq_stats, analyzed_data = analyze_cat_losses(
-            data, threshold, deductible, limit
+            data, threshold
         )
         
         # Create plots
-        freq_fig, loss_dist, peril_plot = create_plots(
+        freq_fig, ecdf_fig, peril_plot = create_plots(
             frequency_by_year, severity_stats, peril_summary, analyzed_data, 
-            threshold, deductible, limit
+            threshold
         )
         
         # Display frequency statistics
@@ -209,19 +154,14 @@ if uploaded_file is not None:
         
         # Display summary statistics
         st.subheader("Loss Statistics")
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("Original Losses")
+            st.subheader("Total Losses")
             st.write(f"Total Loss: ${analyzed_data['Loss'].sum():,.2f}")
             st.write(f"Average Loss: ${analyzed_data['Loss'].mean():,.2f}")
         
         with col2:
-            st.subheader("Layered Losses")
-            st.write(f"Total Loss: ${analyzed_data['LayeredLoss'].sum():,.2f}")
-            st.write(f"Average Loss: ${analyzed_data['LayeredLoss'].mean():,.2f}")
-        
-        with col3:
             st.subheader("Most Frequent Peril")
             top_peril = peril_summary.iloc[0]
             st.write(f"Type: {top_peril['Peril']}")
@@ -229,7 +169,7 @@ if uploaded_file is not None:
         
         # Display plots
         st.plotly_chart(freq_fig, use_container_width=True)
-        st.plotly_chart(loss_dist, use_container_width=True)
+        st.plotly_chart(ecdf_fig, use_container_width=True)
         st.plotly_chart(peril_plot, use_container_width=True)
         
         # Display detailed tables
@@ -248,3 +188,4 @@ if uploaded_file is not None:
         st.error("Please ensure your CSV file contains the required columns: Year, Loss, and Peril")
 else:
     st.info("Please upload a CSV file to begin the analysis.")
+
