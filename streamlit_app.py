@@ -55,19 +55,19 @@ def analyze_cat_losses(data, threshold=0):
 def create_plots(frequency_by_year, severity_stats, peril_summary, data, threshold):
     # Frequency Plot
     freq_fig = make_subplots(specs=[[{"secondary_y": True}]])
-
+    
     freq_fig.add_trace(
         go.Bar(x=frequency_by_year['Year'], y=frequency_by_year['EventCount'],
                name="Event Count", marker_color='steelblue'),
         secondary_y=False
     )
-
+    
     freq_fig.add_trace(
         go.Scatter(x=frequency_by_year['Year'], y=frequency_by_year['TotalLoss'],
                   name="Total Loss", line=dict(color='red')),
         secondary_y=True
     )
-
+    
     freq_fig.update_layout(
         title="Catastrophe Event Frequency and Total Loss by Year",
         xaxis_title="Year",
@@ -77,36 +77,48 @@ def create_plots(frequency_by_year, severity_stats, peril_summary, data, thresho
 
     # ECDF Plot
     fig_ecdf = px.ecdf(data, x='Loss', title='Empirical Cumulative Distribution of Losses')
-
-    # Fit Lomax (Pareto Type II) distribution to the loss data
-    positive_losses = data['Loss'][data['Loss'] > 0]
-
-    # Fit the Lomax distribution
-    params = stats.lomax.fit(positive_losses, floc=0)  # Fix loc=0
-
-    # Generate theoretical CDF from the fitted distribution
-    x = np.linspace(0, 20000000, 1000)  # x from 0 to 20 million
-    cdf_fitted = stats.lomax.cdf(x, *params)
-
-    # Add the theoretical CDF to the ECDF plot
-    fig_ecdf.add_trace(
-        go.Scatter(
-            x=x,
-            y=cdf_fitted,
-            mode='lines',
-            name='Fitted Lomax CDF',
-            line=dict(color='red')
+    
+    # Fit Pareto Type I Distribution starting at the threshold
+    positive_losses = data['Loss']
+    
+    # Fit the Pareto distribution with scale fixed at the threshold
+    # The 'b' parameter is the shape parameter
+    try:
+        # Fit the Pareto distribution; fix scale=threshold to ensure it starts at threshold
+        params = stats.pareto.fit(positive_losses, floc=0, fscale=threshold)
+        shape_param = params[0]
+        loc_param = params[1]
+        scale_param = params[2]
+    except Exception as e:
+        st.error(f"Error fitting Pareto distribution: {e}")
+        shape_param, loc_param, scale_param = None, None, None
+    
+    if shape_param is not None:
+        # Generate theoretical CDF from the fitted distribution
+        x = np.linspace(threshold, 20000000, 1000)  # x from threshold to 20 million
+        cdf_fitted = stats.pareto.cdf(x, shape_param, loc=loc_param, scale=scale_param)
+    
+        # Add the theoretical CDF to the ECDF plot
+        fig_ecdf.add_trace(
+            go.Scatter(
+                x=x,
+                y=cdf_fitted,
+                mode='lines',
+                name='Fitted Pareto CDF',
+                line=dict(color='red')
+            )
         )
-    )
-
-    # Update x-axis range
-    fig_ecdf.update_xaxes(range=[0, 20000000])
-    fig_ecdf.update_layout(
-        xaxis_title='Loss Amount',
-        yaxis_title='Cumulative Probability',
-        legend_title='Legend'
-    )
-
+    
+        # Update x-axis range
+        fig_ecdf.update_xaxes(range=[threshold, 20000000])
+        fig_ecdf.update_layout(
+            xaxis_title='Loss Amount',
+            yaxis_title='Cumulative Probability',
+            legend_title='Legend'
+        )
+    else:
+        st.warning("Pareto distribution could not be fitted to the data.")
+    
     # Peril Loss Plot
     peril_plot = px.bar(
         peril_summary,
@@ -147,7 +159,7 @@ if uploaded_file is not None:
         col1 = st.columns(1)[0]
         
         with col1:
-            # Threshold selector
+            # Threshold selector as number input
             min_loss = data['Loss'].min()
             max_loss = data['Loss'].max()
             threshold = st.number_input(
@@ -218,5 +230,3 @@ if uploaded_file is not None:
         st.error("Please ensure your CSV file contains the required columns: Year, Loss, and Peril")
 else:
     st.info("Please upload a CSV file to begin the analysis.")
-
-
